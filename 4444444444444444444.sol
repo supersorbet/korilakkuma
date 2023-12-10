@@ -113,7 +113,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
 
     uint256 internal _totalSupply;
     string public constant name = "Korilakkuma";
-    string public constant symbol = "SEETHE07";
+    string public constant symbol = "LEEK";
     uint8 public constant decimals = 18;
 
     //admin
@@ -434,7 +434,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         }
     }
 
-    function StakeTokens(uint amt, address _referrer) external synchronized {
+    function StakeSingle(uint amt, address _referrer) external synchronized {
         require(amt > 0, "zero input");
         require(korilakkumaBalance() >= amt, "Error: insufficient balance"); //ensure user has enough funds
         if (_referrer != address(0) && _referrer != msg.sender) {

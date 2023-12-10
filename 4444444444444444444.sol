@@ -434,7 +434,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         }
     }
 
-    function StakeSingle(uint amt, address _referrer) external synchronized {
+    function StakeSingleSlices(uint amt, address _referrer) external synchronized {
         require(amt > 0, "zero input");
         require(korilakkumaBalance() >= amt, "Error: insufficient balance"); //ensure user has enough funds
         if (_referrer != address(0) && _referrer != msg.sender) {

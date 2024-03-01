@@ -89,7 +89,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     mapping(address => bool) public isFeeExempt;
     mapping(address => bool) private isBot;
 
-    address public cakeKORILAKKUMAETH;
+    address public uniKORILAKKUMAETH;
 
     address public uniswapV2Pair;
     IUniswapV2Router02 public uniswapV2Router;
@@ -108,7 +108,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     uint256 public totalStaked;
     address[] public lpAddresses;
     mapping(address => uint) public totalLpFrozen;
-    mapping(address => uint[]) public lpFrozenBalances;
+    mapping(address => uint[]) public stakedLPBalances;
     mapping(address => uint[]) public lpStakeStartTimes;
 
     uint256 internal _totalSupply;
@@ -128,7 +128,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     struct Farmer {
         uint256 stakedBalance;
         uint256 stakeStartTimestamp;
-        uint256 totalStakingInterest;
+        uint256 totalStakingAPY;
         uint256 totalFarmedKorilakkuma;
         uint256 totalBurnt;
         uint256 totalReferralBonus;
@@ -340,7 +340,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         //set user active
         farmer[msg.sender].activeUser = true;
         //update balances
-        lpFrozenBalances[msg.sender][_lpIndex] = lpFrozenBalances[msg.sender][
+        stakedLPBalances[msg.sender][_lpIndex] = stakedLPBalances[msg.sender][
             _lpIndex
         ].add(amt);
         totalLpFrozen[lpAddresses[_lpIndex]] = totalLpFrozen[
@@ -367,17 +367,17 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
 
     function unstakeLP(uint _lpIndex) external synchronized {
         require(
-            lpFrozenBalances[msg.sender][_lpIndex] > 0,
+            stakedLPBalances[msg.sender][_lpIndex] > 0,
             "Error: unsufficient frozen balance"
         ); //ensure user has enough frozen funds
-        uint amt = lpFrozenBalances[msg.sender][_lpIndex];
+        uint amt = stakedLPBalances[msg.sender][_lpIndex];
         if (isHarvestable(msg.sender, _lpIndex)) {
             uint256 interest = calcHarvestRewards(msg.sender, _lpIndex);
             if (interest > 0) {
                 harvest(interest);
             }
         }
-        lpFrozenBalances[msg.sender][_lpIndex] = 0;
+        stakedLPBalances[msg.sender][_lpIndex] = 0;
         lpStakeStartTimes[msg.sender][_lpIndex] = 0;
         totalLpFrozen[lpAddresses[_lpIndex]] = totalLpFrozen[
             lpAddresses[_lpIndex]
@@ -388,7 +388,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
 
     function HarvestKorilakkuma(uint _lpIndex) external synchronized {
         require(
-            lpFrozenBalances[msg.sender][_lpIndex] > 0,
+            stakedLPBalances[msg.sender][_lpIndex] > 0,
             "Error: unsufficient lp balance"
         ); //ensure user has enough lp frozen
         uint256 interest = calcHarvestRewards(msg.sender, _lpIndex);
@@ -422,19 +422,22 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
                 lpStakeStartTimes[msg.sender].push(0);
             }
         }
-        //ensure lpFrozenBalances is in korilakkuma
-        if (lpFrozenBalances[msg.sender].length < lpAddresses.length) {
+        //ensure stakedLPBalances is in korilakkuma
+        if (stakedLPBalances[msg.sender].length < lpAddresses.length) {
             for (
-                uint i = lpFrozenBalances[msg.sender].length;
+                uint i = stakedLPBalances[msg.sender].length;
                 i < lpAddresses.length;
                 i++
             ) {
-                lpFrozenBalances[msg.sender].push(0);
+                stakedLPBalances[msg.sender].push(0);
             }
         }
     }
 
-    function StakeSingleSlices(uint amt, address _referrer) external synchronized {
+    function StakeSingleSlices(
+        uint amt,
+        address _referrer
+    ) external synchronized {
         require(amt > 0, "zero input");
         require(korilakkumaBalance() >= amt, "Error: insufficient balance"); //ensure user has enough funds
         if (_referrer != address(0) && _referrer != msg.sender) {
@@ -503,7 +506,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
                 .stakedBalance
                 .add(interest);
             totalStaked = totalStaked.add(interest);
-            farmer[msg.sender].totalStakingInterest += interest;
+            farmer[msg.sender].totalStakingAPY += interest;
             //reset staking timestamp
             farmer[msg.sender].stakeStartTimestamp = block.timestamp;
             if (farmer[msg.sender].referrer != address(0)) {
@@ -523,7 +526,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         //mint interest if any
         if (interest > 0) {
             _mint(msg.sender, interest);
-            farmer[msg.sender].totalStakingInterest += interest;
+            farmer[msg.sender].totalStakingAPY += interest;
             if (farmer[msg.sender].referrer != address(0)) {
                 _mint(farmer[msg.sender].referrer, interest.div(20)); //5% bonus for referrer
                 farmer[farmer[msg.sender].referrer]
@@ -544,11 +547,11 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         halvening = halvening * 2;
     }
 
-    function BurnKorilakkuma(uint amt) external synchronized {
+    function burnKorilakkuma(uint amt) external synchronized {
         require(
             farmer[msg.sender].totalBurnt.add(amt) <=
-                farmer[msg.sender].totalStakingInterest.mul(burnAdjust),
-            "can only burn equivalent of x3 total staking interest"
+                farmer[msg.sender].totalStakingAPY.mul(burnAdjust),
+            "can only burn of x3 total claims"
         );
         require(amt > 0, "value must be greater than 0");
         require(balanceOf(msg.sender) >= amt, "balance too low");
@@ -556,18 +559,17 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         _burn(msg.sender, amt);
         farmer[msg.sender].totalBurnt += amt;
         //burn tokens of swap - pamp it
-        _balances[cakeKORILAKKUMAETH] = _balances[cakeKORILAKKUMAETH].sub(
+        _balances[uniKORILAKKUMAETH] = _balances[uniKORILAKKUMAETH].sub(
             amt,
             "ERC20: burn amount exceeds balance"
         );
         _totalSupply = _totalSupply.sub(amt);
-        IUniswapV2Pair(cakeKORILAKKUMAETH).sync();
+        IUniswapV2Pair(uniKORILAKKUMAETH).sync();
         emit TokenBurn(msg.sender, amt);
     }
 
     function calcStakingRewards(address _user) public view returns (uint) {
-        // totalstaked / 1000 / 1251 * (minutesPast) @ 42.0% APY
-        // (adjustments up to a max of 84% APY via burning of KORILAKKUMA)
+        // totalstake / 1000 / 1251 * (minutesPast) @ 42.0%
         uint korilakkumaBurnt = farmer[_user].totalBurnt;
         uint staked = farmer[_user].stakedBalance;
         uint apyAdjust = 1000;
@@ -611,14 +613,13 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     ) public view returns (uint) {
         return (
             (
-                lpFrozenBalances[_user][_lpIndex].mul(globalApy).div(
+                stakedLPBalances[_user][_lpIndex].mul(globalApy).div(
                     lpApy[lpAddresses[_lpIndex]]
                 )
             ).mul(minsPastStakeTime(_user, _lpIndex)).div(halvening)
         );
     }
 
-    //returns amount of minutes past since lp stake start
     function minsPastStakeTime(
         address _user,
         uint _lpIndex
@@ -637,7 +638,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
         }
     }
 
-    //check is stake is finished, min 7 days
+    //min 7 days
     function isStakeFinished(address _user) public view returns (bool) {
         if (farmer[_user].stakeStartTimestamp == 0) {
             return false;
@@ -650,7 +651,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     }
 
     //total LP balances frozen in contract
-    function totalFrozenLpBalance(
+    function totalStakedLPBalance(
         uint _lpIndex
     ) external view returns (uint256) {
         return totalLpFrozen[lpAddresses[_lpIndex]];
@@ -682,7 +683,7 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
 
     function setKORILAKKUMAETHpool(address _lpAddress) external onlyAdmins {
         require(!isLocked, "cannot change native pool");
-        cakeKORILAKKUMAETH = _lpAddress;
+        uniKORILAKKUMAETH = _lpAddress;
     }
 
     /////// B U R N ////// (or tax fee)
@@ -691,9 +692,6 @@ contract Korilakkuma is IERC20, farmInterface, ReentrancyGuard {
     // burnRate = newBurnRate;
     // }
 
-    function setTaxRate(uint256 newTaxRate) external onlyAdmins {
-        taxRate = newTaxRate;
-    }
 
     function setBurnAdjust(uint _v) external onlyAdmins {
         burnAdjust = _v;
